@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import json
 from engine import gerar_conteudo_completo, gerar_comentario_contextual, gerar_hashtags_estrategicas
 from chrome_agent import DepuradorChrome, AutomatizadorInstagram
 from gemini_service import ServicoGemini
@@ -29,8 +30,6 @@ if "captura" not in st.session_state:
     st.session_state.captura = None
 if "comentario_gerado" not in st.session_state:
     st.session_state.comentario_gerado = ""
-if "comentario_post" not in st.session_state:
-    st.session_state.comentario_post = ""
 
 # Criando as Abas da Interface (SOLID / Modularidade)
 aba_divulgacao, aba_criar_post, aba_hashtags = st.tabs([
@@ -64,7 +63,7 @@ with aba_divulgacao:
                     st.success("Estado da aba do Chrome capturado com sucesso!")
                 except Exception as e:
                     st.error(f"Erro na conexão com o Chrome: {e}")
-                    st.info("Dica: Certifique-se de que o Chrome de depuração está aberto com a porta 9222 ativa.")
+                    st.info("Dica: Certifique-se de que o Chrome de depuração está aberto com a porta 9222 activa.")
         
         if st.session_state.captura:
             dados = st.session_state.captura
@@ -125,92 +124,154 @@ with aba_divulgacao:
         else:
             st.info("Clique em 'Capturar Aba Ativa' para obter a visualização em tempo real do seu Chrome.")
 
-# ----------------- ABA 2: CRIAR & PUBLICAR POST (NOVO) -----------------
+# ----------------- ABA 2: CRIAR & PUBLICAR POST (LOTE E FILA) -----------------
 with aba_criar_post:
-    st.markdown("## 🚀 Criador & Publicador de Posts (Imagem, Carrossel ou Reels)")
-    st.markdown("Faça o upload da sua mídia e gere legendas inteligentes com a IA para publicação automática no Chrome.")
+    st.markdown("## 🚀 Fila de Planejamento e Publicação Automática")
+    st.markdown("Configure até 4 posts em lote, receba sugestões de horários de pico baseados no nicho e envie as publicações para a sua fila.")
     
-    col_upload, col_ia = st.columns([1, 1])
+    # Carrega/Inicializa a fila local
+    caminho_fila = os.path.join("outputs", "fila_postagens.json")
+    fila = []
+    if os.path.exists(caminho_fila):
+        try:
+            with open(caminho_fila, "r") as f:
+                fila = json.load(f)
+        except:
+            fila = []
+
+    st.markdown("### ✍️ Configurar Novo Lote")
+    quantidade_posts = st.number_input("Quantos posts deseja planejar neste lote?", 1, 4, 1, key="qtd_posts_lote")
     
-    with col_upload:
-        st.markdown("### 🖼️ Mídia do Post")
-        tipo_midia = st.radio("Tipo de publicação:", ["Imagens (Única ou Carrossel)", "Reels (Vídeo)"])
-        
-        arquivos_midia = []
-        if tipo_midia == "Reels (Vídeo)":
-            arquivo = st.file_uploader("Selecione o vídeo do Reels (MP4/MOV):", type=["mp4", "mov"], key="video_reels")
-            if arquivo:
-                arquivos_midia = [arquivo]
-        else:
-            # Permite selecionar múltiplos arquivos de imagem por padrão
-            arquivos = st.file_uploader(
-                "Selecione as imagens do post (selecione uma ou mais para Carrossel):", 
-                type=["png", "jpg", "jpeg"], 
-                accept_multiple_files=True,
-                key="imagens_post"
-            )
-            if arquivos:
-                arquivos_midia = arquivos
+    # Abas dinâmicas para configuração
+    abas_lote = st.tabs([f"Post {i+1}" for i in range(quantidade_posts)])
+    configs_lote = []
+    
+    for idx, aba in enumerate(abas_lote):
+        with aba:
+            col_lote_file, col_lote_prompt = st.columns([1, 1])
+            with col_lote_file:
+                tipo_post_lote = st.radio(f"Formato (Post {idx+1}):", ["Imagens (Única/Carrossel)", "Reels (Vídeo)"], key=f"tipo_post_lote_{idx}")
                 
-        prompt_custom = st.text_area(
-            "Ideias/Instruções para o post (opcional):",
-            placeholder="Ex: Diga que este app é gratuito e ajuda o motorista a economizar no combustível.",
-            key="prompt_post_criar"
-        )
+                if tipo_post_lote == "Reels (Vídeo)":
+                    imagens_lote = st.file_uploader(
+                        f"Selecione o vídeo (Post {idx+1}):", 
+                        type=["mp4", "mov"],
+                        accept_multiple_files=False,
+                        key=f"mídia_lote_video_{idx}"
+                    )
+                    imagens_lote = [imagens_lote] if imagens_lote else []
+                else:
+                    imagens_lote = st.file_uploader(
+                        f"Selecione as mídias (Post {idx+1}):", 
+                        type=["png", "jpg", "jpeg"],
+                        accept_multiple_files=True,
+                        key=f"mídia_lote_img_{idx}"
+                    )
+            with col_lote_prompt:
+                prompt_lote = st.text_area(
+                    f"Instruções/Nicho (Post {idx+1}):", 
+                    placeholder="Ex: Nicho de motoristas, falar sobre custos de combustível.",
+                    key=f"prompt_lote_{idx}"
+                )
+            configs_lote.append({"midias": imagens_lote, "prompt": prompt_lote})
+            
+    btn_gerar_lote = st.button("✨ Gerar Planejamento de Lote com IA", use_container_width=True)
+    
+    if btn_gerar_lote:
+        erros = []
+        posts_novos = []
         
-        # Salva caminhos locais para o upload
-        caminhos_salvos = []
-        if arquivos_midia:
+        for i, config in enumerate(configs_lote):
+            if not config["midias"]:
+                erros.append(f"Mídia do Post {i+1} não foi selecionada.")
+                continue
+                
+            # Salva mídias locais
             os.makedirs("outputs", exist_ok=True)
-            for idx, arq in enumerate(arquivos_midia):
+            caminhos_locais = []
+            for j, arq in enumerate(config["midias"]):
                 ext = arq.name.split(".")[-1]
-                caminho_local = os.path.join(os.getcwd(), "outputs", f"upload_temp_{idx}.{ext}")
+                caminho_local = os.path.join(os.getcwd(), "outputs", f"lote_temp_{len(fila) + i}_{j}.{ext}")
                 with open(caminho_local, "wb") as f:
                     f.write(arq.read())
-                caminhos_salvos.append(caminho_local)
+                caminhos_locais.append(caminho_local)
                 
-    with col_ia:
-        st.markdown("### ✍️ Legenda IA & Publicação")
-        
-        btn_gerar_legenda = st.button("✨ Analisar Mídia & Gerar Legenda", use_container_width=True, key="btn_gerar_legenda_post")
-        
-        if btn_gerar_legenda:
-            if not caminhos_salvos:
-                st.error("Por favor, selecione as imagens ou vídeo primeiro!")
-            else:
-                with st.spinner("IA analisando as imagens e estruturando legenda..."):
-                    try:
-                        from PIL import Image as PILImage
-                        # Abre a primeira imagem para análise visual do Gemini (multimodal)
-                        img_analise = PILImage.open(caminhos_salvos[0])
-                        
-                        servico = ServicoGemini()
-                        legenda_gerada = servico.gerar_legenda_de_imagem(img_analise, prompt_custom)
-                        st.session_state.comentario_post = legenda_gerada
-                        st.success("Legenda gerada com sucesso!")
-                    except Exception as e:
-                        st.error(f"Erro na IA do Gemini: {e}")
-                        
-        if st.session_state.comentario_post:
-            legenda_revisada = st.text_area(
-                "📝 Revise o texto antes de publicar:",
-                value=st.session_state.comentario_post,
-                height=220,
-                key="legenda_post_revisao"
-            )
+            # IA gera legenda e horário
+            with st.spinner(f"Processando Post {i+1} no Gemini..."):
+                try:
+                    from PIL import Image as PILImage
+                    # Usamos a primeira foto para análise visual multimodal
+                    img_analise = PILImage.open(caminhos_locais[0])
+                    servico = ServicoGemini()
+                    resultado_ia = servico.gerar_legenda_e_horario(img_analise, config["prompt"])
+                    
+                    posts_novos.append({
+                        "id": len(fila) + len(posts_novos) + 1,
+                        "caminhos_mídias": caminhos_locais,
+                        "legenda": resultado_ia["legenda"],
+                        "horario_sugerido": resultado_ia["horario"],
+                        "status": "Aguardando postagem"
+                    })
+                except Exception as e:
+                    erros.append(f"Erro no Post {i+1}: {e}")
+                    
+        if erros:
+            for err in erros:
+                st.error(err)
+        if posts_novos:
+            fila.extend(posts_novos)
+            with open(caminho_fila, "w") as f:
+                json.dump(fila, f, indent=4)
+            st.success(f"{len(posts_novos)} posts gerados e adicionados à fila local com sucesso!")
             
-            btn_publicar_post = st.button("🚀 Publicar Automático no Instagram", use_container_width=True)
-            
-            if btn_publicar_post:
-                with st.spinner("Conectando ao Chrome e iniciando upload automático..."):
-                    try:
-                        depurador = DepuradorChrome()
-                        automatizador = AutomatizadorInstagram(depurador)
-                        status_pub = automatizador.publicar_post_instagram(caminhos_salvos, legenda_revisada)
-                        st.success(f"Status: {status_pub}")
-                        st.balloons()
-                    except Exception as e:
-                        st.error(f"Falha ao realizar publicação automática: {e}")
+    st.divider()
+    st.markdown("### 🗂️ Fila de Publicações Prontas")
+    
+    if not fila:
+        st.info("Nenhuma publicação planejada na fila no momento.")
+    else:
+        for idx, post in enumerate(fila):
+            with st.expander(f"Post {idx+1} - Horário sugerido: {post['horario_sugerido']} ({post['status']})"):
+                col_prev, col_detalhes = st.columns([1, 2])
+                with col_prev:
+                    # Mostra a miniatura do post se for imagem
+                    if post["caminhos_mídias"] and os.path.exists(post["caminhos_mídias"][0]):
+                        ext = post["caminhos_mídias"][0].split(".")[-1].lower()
+                        if ext in ["png", "jpg", "jpeg"]:
+                            st.image(post["caminhos_mídias"][0], use_container_width=True)
+                        else:
+                            st.info("Mídia de Vídeo (Reels)")
+                with col_detalhes:
+                    legenda_ed = st.text_area(f"Texto da publicação:", value=post["legenda"], key=f"legenda_ed_{idx}", height=150)
+                    
+                    # Botões de Ação
+                    col_btn1, col_btn2 = st.columns([1, 1])
+                    with col_btn1:
+                        btn_postar_fila = st.button("🚀 Publicar Agora", key=f"btn_pub_fila_{idx}", use_container_width=True)
+                    with col_btn2:
+                        btn_remover_fila = st.button("❌ Remover da Fila", key=f"btn_rem_fila_{idx}", use_container_width=True)
+                        
+                    if btn_postar_fila:
+                        with st.spinner("Automação ativa... Publicando no Instagram..."):
+                            try:
+                                depurador = DepuradorChrome()
+                                automatizador = AutomatizadorInstagram(depurador)
+                                res_pub = automatizador.publicar_post_instagram(post["caminhos_mídias"], legenda_ed)
+                                st.success(f"Status: {res_pub}")
+                                # Atualiza status
+                                fila[idx]["status"] = "Postado"
+                                with open(caminho_fila, "w") as f:
+                                    json.dump(fila, f, indent=4)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro ao postar: {e}")
+                                
+                    if btn_remover_fila:
+                        fila.pop(idx)
+                        with open(caminho_fila, "w") as f:
+                            json.dump(fila, f, indent=4)
+                        st.success("Post removido da fila local.")
+                        st.rerun()
 
 # ----------------- ABA 3: PESQUISADOR DE HASHTAGS -----------------
 with aba_hashtags:

@@ -95,34 +95,34 @@ class ServicoGemini:
         """
         Gera um comentário de divulgação empático a partir do texto e do print de tela do post (Multimodal).
         """
-        prompt = (
-            f"Você é um motorista de aplicativo experiente rodando no dia a dia e quer ajudar outros motoristas.\n"
-            f"Analise o seguinte post/desabafo de um motorista no Instagram:\n\n"
-            f"\"\"\"\n{texto_post}\n\"\"\"\n\n"
-            f"Gere um comentário curto (máximo de 3 parágrafos pequenos), empático, amigável e com tom de depoimento real "
-            f"para responder a esse post. No meio do texto, recomende de forma sutil e natural o aplicativo de gestão "
-            f"que você usa para planejar custos de combustível, manutenção e calcular o real lucro: "
-            f"o 'App Gestão Motora' com o link (https://produtostops.online/app.gestaomotora/).\n\n"
-            f"Evite parecer spam ou propaganda forçada. Fale na primeira pessoa do singular (eu), use quebras de linha e no máximo 1 ou 2 emojis."
-        )
-        
-        elementos_conteudo = []
-        
-        # Integração Multimodal: Se houver print do Chrome, enviamos a imagem para análise da IA
-        if caminho_imagem and os.path.exists(caminho_imagem):
-            try:
-                img = Image.open(caminho_imagem)
-                elementos_conteudo.append(img)
-                prompt += "\nUtilize também a imagem anexada do post para extrair o contexto visual e entender melhor o que o criador está mostrando."
-            except Exception as e:
-                print(f"Erro ao carregar imagem para análise multimodal: {e}")
-                
-        elementos_conteudo.append(prompt)
-        
         try:
             if not self.client:
                 raise ValueError("Cliente do Gemini não inicializado.")
-                
+            
+            prompt = (
+                f"Você é um motorista de aplicativo experiente rodando no dia a dia e quer ajudar outros motoristas.\n"
+                f"Analise o seguinte post/desabafo de um motorista no Instagram:\n\n"
+                f"\"\"\"\n{texto_post}\n\"\"\"\n\n"
+                f"Gere um comentário curto (máximo de 3 parágrafos pequenos), empático, amigável e com tom de depoimento real "
+                f"para responder a esse post. No meio do texto, recomende de forma sutil e natural o aplicativo de gestão "
+                f"que você usa para planejar custos de combustível, manutenção e calcular o real lucro: "
+                f"o 'App Gestão Motora' com o link (https://produtostops.online/app.gestaomotora/).\n\n"
+                f"Evite parecer spam ou propaganda forçada. Fale na primeira pessoa do singular (eu), use quebras de linha e no máximo 1 ou 2 emojis."
+            )
+            
+            elementos_conteudo = []
+            
+            # Integração Multimodal: Se houver print do Chrome, enviamos a imagem para análise da IA
+            if caminho_imagem and os.path.exists(caminho_imagem):
+                try:
+                    img = Image.open(caminho_imagem)
+                    elementos_conteudo.append(img)
+                    prompt += "\nUtilize também a imagem anexada do post para extrair o contexto visual e entender melhor o que o criador está mostrando."
+                except Exception as e:
+                    print(f"Erro ao carregar imagem para análise multimodal: {e}")
+                    
+            elementos_conteudo.append(prompt)
+            
             res = self.client.models.generate_content(
                 model=self.modelo_padrao,
                 contents=elementos_conteudo
@@ -162,3 +162,39 @@ class ServicoGemini:
             return res.text.strip()
         except Exception as e:
             return f"⚠️ Erro ao analisar a imagem no Gemini: {e}"
+
+    def gerar_legenda_e_horario(self, imagem_pillow: Image, contexto_nicho: str = None) -> dict:
+        """
+        Analisa visualmente a imagem e gera a legenda ideal + sugestão de melhor horário (Multimodal).
+        """
+        if not self.client:
+            return {"legenda": "Erro: Cliente do Gemini não inicializado.", "horario": "18:00 (Horário padrão)"}
+            
+        prompt = (
+            "Analise visualmente esta imagem e gere duas informações em formato estruturado:\n"
+            "1. LEGENDA: Uma legenda de alto engajamento para o Instagram com emojis, quebras de linha e exatamente 5 hashtags no final.\n"
+            "2. HORARIO: Indique o melhor horário estratégico de postagem para este conteúdo no Instagram, justificando brevemente em uma frase curta.\n\n"
+            "Formate a sua resposta estritamente assim:\n"
+            "---INICIO---\n"
+            "LEGENDA: [texto da legenda]\n"
+            "HORARIO: [sugestão de horário e justificativa]\n"
+            "---FIM---"
+        )
+        if contexto_nicho:
+            prompt += f"\nAdapte a legenda e horário para o nicho/contexto: {contexto_nicho}.\n"
+            
+        try:
+            res = self.client.models.generate_content(
+                model=self.modelo_padrao,
+                contents=[imagem_pillow, prompt]
+            )
+            texto_puro = res.text.strip()
+            try:
+                legenda = texto_puro.split("LEGENDA:")[1].split("HORARIO:")[0].strip()
+                horario = texto_puro.split("HORARIO:")[1].split("---FIM---")[0].strip()
+            except Exception:
+                legenda = texto_puro
+                horario = "12:00 (Horário padrão de almoço)"
+            return {"legenda": legenda, "horario": horario}
+        except Exception as e:
+            return {"legenda": f"⚠️ Erro ao gerar com Gemini: {e}", "horario": "18:00"}
