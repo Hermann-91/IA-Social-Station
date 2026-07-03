@@ -5,7 +5,7 @@ from PIL import Image
 class ServicoGemini:
     """
     Responsabilidade: Gerenciar todos os serviços e integrações com o modelo Google Gemini.
-    Princípio: SRP (Single Responsibility Principle) - Focado unicamente na lógica de IA.
+    Camada: servicos (IA Wrapper)
     """
     def __init__(self, api_key=None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
@@ -92,9 +92,7 @@ class ServicoGemini:
             return f"⚠️ Erro ao obter hashtags do Gemini: {e}"
 
     def gerar_comentario_contextual(self, texto_post: str, caminho_imagem: str = None) -> str:
-        """
-        Gera um comentário de divulgação empático a partir do texto e do print de tela do post (Multimodal).
-        """
+        """Gera um comentário de divulgação empático a partir do texto e do print de tela (Multimodal)."""
         try:
             if not self.client:
                 raise ValueError("Cliente do Gemini não inicializado.")
@@ -112,7 +110,6 @@ class ServicoGemini:
             
             elementos_conteudo = []
             
-            # Integração Multimodal: Se houver print do Chrome, enviamos a imagem para análise da IA
             if caminho_imagem and os.path.exists(caminho_imagem):
                 try:
                     img = Image.open(caminho_imagem)
@@ -137,9 +134,7 @@ class ServicoGemini:
             )
 
     def gerar_legenda_de_imagem(self, imagem_pillow: Image, contexto_nicho: str = None) -> str:
-        """
-        Analisa visualmente a imagem fornecida pelo usuário e cria legenda e hashtags adequadas (Multimodal).
-        """
+        """Gera legenda e hashtags baseando-se na imagem (Multimodal)."""
         if not self.client:
             return "⚠️ Erro: Cliente do Gemini não inicializado."
             
@@ -164,9 +159,7 @@ class ServicoGemini:
             return f"⚠️ Erro ao analisar a imagem no Gemini: {e}"
 
     def gerar_legenda_e_horario(self, imagem_pillow: Image, contexto_nicho: str = None) -> dict:
-        """
-        Analisa visualmente a imagem e gera a legenda ideal + sugestão de melhor horário (Multimodal).
-        """
+        """Analisa a imagem e gera legenda ideal + recomendação de horário estratégico (Multimodal)."""
         if not self.client:
             return {"legenda": "Erro: Cliente do Gemini não inicializado.", "horario": "18:00 (Horário padrão)"}
             
