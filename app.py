@@ -1,7 +1,8 @@
 import streamlit as st
 import os
-from engine import gerar_conteudo_completo, gerar_comentario_contextual
+from engine import gerar_conteudo_completo, gerar_comentario_contextual, gerar_hashtags_estrategicas
 from chrome_agent import DepuradorChrome, AutomatizadorInstagram
+from gemini_service import ServicoGemini
 
 st.set_page_config(page_title="IA Social Station", layout="wide", page_icon="📸")
 
@@ -28,58 +29,17 @@ if "captura" not in st.session_state:
     st.session_state.captura = None
 if "comentario_gerado" not in st.session_state:
     st.session_state.comentario_gerado = ""
+if "comentario_post" not in st.session_state:
+    st.session_state.comentario_post = ""
 
-# Criando as Abas da Interface
-aba_posts, aba_divulgacao = st.tabs(["📝 Criador de Cards de Conteúdo", "🤖 Divulgação Inteligente (Chrome)"])
+# Criando as Abas da Interface (SOLID / Modularidade)
+aba_divulgacao, aba_criar_post, aba_hashtags = st.tabs([
+    "🤖 Divulgação Ativa (Chrome)", 
+    "🚀 Criar & Publicar Post", 
+    "#️⃣ Hashtags em Alta"
+])
 
-with aba_posts:
-    with st.sidebar:
-        st.header("Configurações do Post")
-        tema = st.text_input("Qual o tema/nicho?", placeholder="Ex: Minimalismo Digital", key="tema_posts")
-        qtd = st.slider("Quantos posts planejar?", 1, 5, 1, key="qtd_posts")
-        botao = st.button("Gerar Estratégia", use_container_width=True, key="btn_gerar_posts")
-        
-        st.divider()
-        st.info("Este modelo foca em gerar o **Prompt Visual** perfeito e a **Legenda Otimizada** com 5 hashtags.")
-
-    if botao:
-        if not tema:
-            st.error("Por favor, insira um tema!")
-        else:
-            with st.spinner(f"Analisando tendências para '{tema}'..."):
-                try:
-                    posts = gerar_conteudo_completo(tema, qtd)
-                    
-                    if not posts:
-                        st.warning("Não foi possível gerar conteúdo agora.")
-                    else:
-                        for idx, post in enumerate(posts):
-                            with st.container():
-                                st.markdown(f"## 📝 Post {idx + 1} - Tema: {post['tema']}")
-                                
-                                col1, col2 = st.columns([1, 1])
-                                
-                                with col1:
-                                    st.markdown("### 🖼️ Prompt para Imagem")
-                                    st.info("Use este prompt no Midjourney, Leonardo.ai ou Gemini para gerar sua imagem:")
-                                    st.code(post["prompt_usado"], language="text")
-                                    st.success("Dica: Imagens em aspecto 4:5 performam melhor no feed.")
-
-                                with col2:
-                                    st.markdown("### ✍️ Legenda + Hashtags (Máx 5)")
-                                    st.text_area(
-                                        "Copie para o Instagram:",
-                                        post["legenda_completa"],
-                                        height=250,
-                                        key=f"txt_{idx}"
-                                    )
-                                    st.caption("As 5 hashtags estão incluídas ao final do texto.")
-                                
-                                st.divider()
-                                    
-                except Exception as e:
-                    st.error(f"Erro ao processar: {e}")
-
+# ----------------- ABA 1: DIVULGAÇÃO INTELIGENTE (CHROME) -----------------
 with aba_divulgacao:
     st.markdown("## 🤖 Módulo de Divulgação Cooperativa (Instagram)")
     st.markdown(
@@ -124,7 +84,7 @@ with aba_divulgacao:
             btn_gerar_comment = st.button("✨ Gerar Comentário Inteligente com IA", use_container_width=True)
             
             if btn_gerar_comment:
-                with st.spinner("Gemini gerando comentário contextualizado..."):
+                with st.spinner("Gemini gerando comentário contextualizado (Análise Multimodal ativa)..."):
                     try:
                         comment = gerar_comentario_contextual(texto_sel)
                         st.session_state.comentario_gerado = comment
@@ -164,3 +124,111 @@ with aba_divulgacao:
                 st.info("Nenhuma imagem de captura disponível.")
         else:
             st.info("Clique em 'Capturar Aba Ativa' para obter a visualização em tempo real do seu Chrome.")
+
+# ----------------- ABA 2: CRIAR & PUBLICAR POST (NOVO) -----------------
+with aba_criar_post:
+    st.markdown("## 🚀 Criador & Publicador de Posts (Imagem, Carrossel ou Reels)")
+    st.markdown("Faça o upload da sua mídia e gere legendas inteligentes com a IA para publicação automática no Chrome.")
+    
+    col_upload, col_ia = st.columns([1, 1])
+    
+    with col_upload:
+        st.markdown("### 🖼️ Mídia do Post")
+        tipo_midia = st.radio("Tipo de publicação:", ["Imagem Única", "Carrossel (Múltiplas Fotos)", "Reels (Vídeo)"])
+        
+        arquivos_midia = []
+        if tipo_midia == "Reels (Vídeo)":
+            arquivo = st.file_uploader("Selecione o vídeo do Reels (MP4/MOV):", type=["mp4", "mov"], key="video_reels")
+            if arquivo:
+                arquivos_midia = [arquivo]
+        else:
+            multiplas = (tipo_midia == "Carrossel (Múltiplas Fotos)")
+            arquivos = st.file_uploader(
+                "Selecione as imagens do post:", 
+                type=["png", "jpg", "jpeg"], 
+                accept_multiple_files=multiplas,
+                key="imagens_post"
+            )
+            if arquivos:
+                arquivos_midia = arquivos if isinstance(arquivos, list) else [arquivos]
+                
+        prompt_custom = st.text_area(
+            "Ideias/Instruções para o post (opcional):",
+            placeholder="Ex: Diga que este app é gratuito e ajuda o motorista a economizar no combustível.",
+            key="prompt_post_criar"
+        )
+        
+        # Salva caminhos locais para o upload
+        caminhos_salvos = []
+        if arquivos_midia:
+            os.makedirs("outputs", exist_ok=True)
+            for idx, arq in enumerate(arquivos_midia):
+                ext = arq.name.split(".")[-1]
+                caminho_local = os.path.join(os.getcwd(), "outputs", f"upload_temp_{idx}.{ext}")
+                with open(caminho_local, "wb") as f:
+                    f.write(arq.read())
+                caminhos_salvos.append(caminho_local)
+                
+    with col_ia:
+        st.markdown("### ✍️ Legenda IA & Publicação")
+        
+        btn_gerar_legenda = st.button("✨ Analisar Mídia & Gerar Legenda", use_container_width=True, key="btn_gerar_legenda_post")
+        
+        if btn_gerar_legenda:
+            if not caminhos_salvos:
+                st.error("Por favor, selecione as imagens ou vídeo primeiro!")
+            else:
+                with st.spinner("IA analisando as imagens e estruturando legenda..."):
+                    try:
+                        from PIL import Image as PILImage
+                        # Abre a primeira imagem para análise visual do Gemini (multimodal)
+                        img_analise = PILImage.open(caminhos_salvos[0])
+                        
+                        servico = ServicoGemini()
+                        legenda_gerada = servico.gerar_legenda_de_imagem(img_analise, prompt_custom)
+                        st.session_state.comentario_post = legenda_gerada
+                        st.success("Legenda gerada com sucesso!")
+                    except Exception as e:
+                        st.error(f"Erro na IA do Gemini: {e}")
+                        
+        if st.session_state.comentario_post:
+            legenda_revisada = st.text_area(
+                "📝 Revise o texto antes de publicar:",
+                value=st.session_state.comentario_post,
+                height=220,
+                key="legenda_post_revisao"
+            )
+            
+            btn_publicar_post = st.button("🚀 Publicar Automático no Instagram", use_container_width=True)
+            
+            if btn_publicar_post:
+                with st.spinner("Conectando ao Chrome e iniciando upload automático..."):
+                    try:
+                        depurador = DepuradorChrome()
+                        automatizador = AutomatizadorInstagram(depurador)
+                        status_pub = automatizador.publicar_post_instagram(caminhos_salvos, legenda_revisada)
+                        st.success(f"Status: {status_pub}")
+                        st.balloons()
+                    except Exception as e:
+                        st.error(f"Falha ao realizar publicação automática: {e}")
+
+# ----------------- ABA 3: PESQUISADOR DE HASHTAGS -----------------
+with aba_hashtags:
+    st.markdown("## #️⃣ Gerador de Hashtags Estratégicas")
+    st.markdown("Pesquise e extraia rapidamente as hashtags de maior engajamento para qualquer nicho.")
+    
+    tema_hash = st.text_input("Insira o tema/nicho para busca:", placeholder="Ex: Motorista de Aplicativo", key="tema_hash_input")
+    qtd_hash = st.slider("Quantidade de hashtags sugeridas:", 5, 20, 10, key="qtd_hash_slider")
+    btn_gerar_hash = st.button("🔍 Pesquisar Hashtags", use_container_width=True, key="btn_gerar_hash")
+    
+    if btn_gerar_hash:
+        if not tema_hash:
+            st.error("Por favor, digite um tema para a pesquisa!")
+        else:
+            with st.spinner(f"Analisando métricas de engajamento para '{tema_hash}'..."):
+                try:
+                    resultado_hash = gerar_hashtags_estrategicas(tema_hash, qtd_hash)
+                    st.markdown("### 📈 Hashtags Sugeridas:")
+                    st.info(resultado_hash)
+                except Exception as e:
+                    st.error(f"Erro ao obter hashtags: {e}")

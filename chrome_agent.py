@@ -3,6 +3,7 @@ import json
 import urllib.request
 import base64
 import os
+import time
 from websocket import create_connection
 
 class DepuradorChrome:
@@ -181,5 +182,121 @@ class AutomatizadorInstagram:
                 raise ValueError(resultado)
                 
             return resultado
+        finally:
+            self.depurador.fechar()
+
+    def publicar_post_instagram(self, caminhos_arquivos: list, texto_legenda: str) -> str:
+        """
+        Automatiza o fluxo completo de publicação no Instagram:
+        Abre o modal de criação, faz o upload dos arquivos via CDP, insere a legenda e publica.
+        """
+        aba = self._localizar_aba_instagram()
+        self.depurador.conectar_aba(aba["webSocketDebuggerUrl"])
+        
+        try:
+            # Passo 1: Injeta JS para clicar no botão "Criar" (Nova Publicação) na barra lateral
+            js_abrir_modal = """
+            (() => {
+                const criarBtn = Array.from(document.querySelectorAll('span, a, svg')).find(el => {
+                    const label = el.getAttribute('aria-label') || '';
+                    const text = el.textContent || '';
+                    return label.includes('Nova publicação') || label.includes('Criar') || text.includes('Criar') || text.includes('Create');
+                });
+                if (criarBtn) {
+                    const clicavel = criarBtn.closest('a') || criarBtn.closest('button') || criarBtn;
+                    clicavel.click();
+                    return "Botão Criar clicado.";
+                }
+                return "Erro: Botão Criar não encontrado na interface.";
+            })();
+            """
+            res_abrir = self.depurador.enviar_comando("Runtime.evaluate", {"expression": js_abrir_modal, "returnByValue": True})
+            status_abrir = res_abrir["result"]["result"].get("value", "")
+            if "Erro" in status_abrir:
+                raise ValueError(status_abrir)
+            
+            # Aguarda 2 segundos para o modal de criação do Instagram carregar no DOM
+            time.sleep(2.0)
+            
+            # Passo 2: Localiza o input de arquivo via CDP e faz o upload dos caminhos físicos
+            self.depurador.enviar_comando("DOM.enable")
+            doc = self.depurador.enviar_comando("DOM.getDocument")
+            root_node_id = doc["result"]["root"]["nodeId"]
+            
+            # Busca o seletor de arquivos do modal
+            res_query = self.depurador.enviar_comando(
+                "DOM.querySelector", 
+                {"nodeId": root_node_id, "selector": "input[type='file']"}
+            )
+            
+            if "result" not in res_query or "nodeId" not in res_query["result"]:
+                raise ValueError("Erro: Input de upload de arquivos do Instagram não encontrado no modal.")
+                
+            input_node_id = res_query["result"]["nodeId"]
+            
+            # Injeta os arquivos no Chrome de forma transparente (sem abrir a janela do sistema)
+            self.depurador.enviar_comando(
+                "DOM.setFileInputFiles", 
+                {"nodeId": input_node_id, "files": caminhos_arquivos}
+            )
+            
+            # Aguarda 3 segundos para o Chrome renderizar as fotos e carregar
+            time.sleep(3.0)
+            
+            # Passo 3: Clique no primeiro "Avançar" (Corte/Aspecto)
+            js_avancar = """
+            (() => {
+                const avancarBtn = Array.from(document.querySelectorAll('[role="button"], button')).find(el => {
+                    const text = el.textContent.trim();
+                    return text === 'Avançar' || text === 'Next';
+                });
+                if (avancarBtn) {
+                    avancarBtn.click();
+                    return "Avançar clicado.";
+                }
+                return "Erro: Botão Avançar não encontrado na tela de corte.";
+            })();
+            """
+            self.depurador.enviar_comando("Runtime.evaluate", {"expression": js_avancar})
+            time.sleep(1.5)
+            
+            # Passo 4: Clique no segundo "Avançar" (Filtros/Edição)
+            self.depurador.enviar_comando("Runtime.evaluate", {"expression": js_avancar})
+            time.sleep(1.5)
+            
+            # Passo 5: Preenche o campo de Legenda do Post
+            js_escrever_legenda = f"""
+            (() => {{
+                const legendaBox = document.querySelector('[aria-label="Escreva uma legenda..."]') || 
+                                   document.querySelector('[aria-label="Write a caption..."]') ||
+                                   document.querySelector('[role="textbox"]');
+                if (!legendaBox) {{
+                    return "Erro: Campo de legenda não encontrado no formulário.";
+                }}
+                legendaBox.focus();
+                document.execCommand('insertText', false, {json.dumps(texto_legenda)});
+                return "Legenda preenchida.";
+            }})();
+            """
+            self.depurador.enviar_comando("Runtime.evaluate", {"expression": js_escrever_legenda})
+            time.sleep(1.5)
+            
+            # Passo 6: Clique em "Compartilhar" (Publicar)
+            js_compartilhar = """
+            (() => {
+                const compartilharBtn = Array.from(document.querySelectorAll('[role="button"], button')).find(el => {
+                    const text = el.textContent.trim();
+                    return text === 'Compartilhar' || text === 'Share';
+                });
+                if (compartilharBtn) {
+                    compartilharBtn.click();
+                    return "Post compartilhado com sucesso!";
+                }
+                return "Erro: Botão Compartilhar não encontrado.";
+            })();
+            """
+            res_final = self.depurador.enviar_comando("Runtime.evaluate", {"expression": js_compartilhar, "returnByValue": True})
+            return res_final["result"]["result"].get("value", "")
+            
         finally:
             self.depurador.fechar()
