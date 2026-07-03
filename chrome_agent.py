@@ -40,13 +40,22 @@ class DepuradorChrome:
         if not self.ws:
             raise ConnectionError("Nenhuma conexão WebSocket ativa com o navegador.")
             
+        cmd_id = 100
         cmd = {
-            "id": 1,
+            "id": cmd_id,
             "method": method,
             "params": params or {}
         }
         self.ws.send(json.dumps(cmd))
-        return json.loads(self.ws.recv())
+        
+        while True:
+            res = json.loads(self.ws.recv())
+            if "id" not in res:
+                continue
+            if res.get("id") == cmd_id:
+                if "error" in res:
+                    raise ValueError(f"Erro no comando CDP '{method}': {res['error'].get('message', 'Erro desconhecido')}")
+                return res
 
 
 class AutomatizadorInstagram:
@@ -207,6 +216,7 @@ class AutomatizadorInstagram:
                 if (criarBtn) {
                     const clicavel = criarBtn.closest('a') || criarBtn.closest('button') || criarBtn;
                     clicavel.click();
+                    clicavel.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                     return "Botão Criar clicado.";
                 }
                 return "Erro: Botão Criar não encontrado na interface.";
@@ -233,6 +243,7 @@ class AutomatizadorInstagram:
             
             # Converte o objectId do JS para o nodeId do DOM do CDP
             self.depurador.enviar_comando("DOM.enable")
+            self.depurador.enviar_comando("DOM.getDocument", {"depth": -1, "pierce": True})
             res_node = self.depurador.enviar_comando("DOM.requestNode", {"objectId": object_id})
             
             if "result" not in res_node or "nodeId" not in res_node["result"]:
@@ -304,5 +315,17 @@ class AutomatizadorInstagram:
             res_final = self.depurador.enviar_comando("Runtime.evaluate", {"expression": js_compartilhar, "returnByValue": True})
             return res_final["result"]["result"].get("value", "")
             
+        except Exception as e:
+            try:
+                self.depurador.enviar_comando("Page.enable")
+                res_print = self.depurador.enviar_comando("Page.captureScreenshot", {"format": "png"})
+                if "result" in res_print and "data" in res_print["result"]:
+                    img_data = base64.b64decode(res_print["result"]["data"])
+                    os.makedirs("outputs", exist_ok=True)
+                    with open("outputs/error_screenshot.png", "wb") as f:
+                        f.write(img_data)
+            except Exception as print_err:
+                print(f"Erro ao capturar screenshot de erro: {print_err}")
+            raise e
         finally:
             self.depurador.fechar()
