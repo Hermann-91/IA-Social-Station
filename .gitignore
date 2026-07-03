@@ -1,0 +1,13 @@
+# Ambiente Virtual
+venv/
+
+# Variaveis de Ambiente e Chaves de API
+.env
+
+# Resultados de Capturas Temporarias
+outputs/
+
+# Caches de Execucao e Testes do Python
+__pycache__/
+*.pyc
+.pytest_cache/

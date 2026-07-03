@@ -1,0 +1,7 @@
+google-genai
+streamlit
+python-dotenv
+Pillow
+websocket-client
+pytest
+pytest-mock
