@@ -1,6 +1,9 @@
 import streamlit as st
 import os
 import json
+import threading
+import time
+from datetime import datetime, date, time as dt_time
 from engine import gerar_conteudo_completo, gerar_comentario_contextual, gerar_hashtags_estrategicas
 from chrome_agent import DepuradorChrome, AutomatizadorInstagram
 from gemini_service import ServicoGemini
@@ -24,6 +27,54 @@ st.markdown("""
 
 st.title("📸 IA Social Station")
 st.subheader("Orquestração de Conteúdo e Automação de Divulgação com Inteligência Artificial.")
+
+# --- MONITORADOR E AGENDADOR EM SEGUNDO PLANO (SOLID / SINGLETON) ---
+def monitorar_fila_agendamento():
+    caminho_fila = os.path.join("outputs", "fila_postagens.json")
+    while True:
+        if os.path.exists(caminho_fila):
+            try:
+                with open(caminho_fila, "r") as f:
+                    fila = json.load(f)
+                
+                alterado = False
+                agora = datetime.now()
+                
+                for idx, post in enumerate(fila):
+                    if post.get("status") == "Agendado" and post.get("data_hora_agendamento"):
+                        dt_agendado = datetime.strptime(post["data_hora_agendamento"], "%Y-%m-%d %H:%M:%S")
+                        
+                        if agora >= dt_agendado:
+                            # Altera o status para evitar execuções concorrentes
+                            fila[idx]["status"] = "Postando automaticamente..."
+                            with open(caminho_fila, "w") as f:
+                                json.dump(fila, f, indent=4)
+                            
+                            try:
+                                depurador = DepuradorChrome()
+                                automatizador = AutomatizadorInstagram(depurador)
+                                res_pub = automatizador.publicar_post_instagram(post["caminhos_mídias"], post["legenda"])
+                                fila[idx]["status"] = f"Postado automaticamente às {agora.strftime('%H:%M')}"
+                            except Exception as e:
+                                fila[idx]["status"] = f"Falha no agendamento: {str(e)}"
+                            
+                            alterado = True
+                
+                if alterado:
+                    with open(caminho_fila, "w") as f:
+                        json.dump(fila, f, indent=4)
+            except:
+                pass
+        # Monitora a fila a cada 30 segundos
+        time.sleep(30)
+
+@st.cache_resource
+def iniciar_agendador_background():
+    thread = threading.Thread(target=monitorar_fila_agendamento, daemon=True)
+    thread.start()
+    return "Agendador ativo"
+
+iniciar_agendador_background()
 
 # Inicializa estados de sessão do Streamlit para manter dados entre cliques
 if "captura" not in st.session_state:
@@ -230,8 +281,13 @@ with aba_criar_post:
     if not fila:
         st.info("Nenhuma publicação planejada na fila no momento.")
     else:
+        # Adiciona um botão de atualização rápida da tela na fila
+        st.button("🔄 Atualizar Status da Fila", key="btn_refresh_fila", use_container_width=True)
+        
         for idx, post in enumerate(fila):
-            with st.expander(f"Post {idx+1} - Horário sugerido: {post['horario_sugerido']} ({post['status']})"):
+            # Formata o cabeçalho exibindo detalhes de agendamento se existirem
+            agendado_info = f" | 📅 Agendado para {post.get('data_hora_agendamento')}" if post.get('data_hora_agendamento') and post.get('status') == 'Agendado' else ""
+            with st.expander(f"Post {idx+1} - Horário sugerido: {post['horario_sugerido']} ({post['status']}{agendado_info})"):
                 col_prev, col_detalhes = st.columns([1, 2])
                 with col_prev:
                     # Mostra a miniatura do post se for imagem
@@ -244,7 +300,26 @@ with aba_criar_post:
                 with col_detalhes:
                     legenda_ed = st.text_area(f"Texto da publicação:", value=post["legenda"], key=f"legenda_ed_{idx}", height=150)
                     
-                    # Botões de Ação
+                    # Seção de Agendamento Horário
+                    st.markdown("**📅 Configuração de Agendamento Automático**")
+                    col_data, col_hora, col_agendar = st.columns([1, 1, 1.2])
+                    with col_data:
+                        data_post = st.date_input("Escolha a data:", value=date.today(), key=f"date_{idx}")
+                    with col_hora:
+                        hora_post = st.time_input("Escolha a hora:", value=datetime.now().time(), key=f"time_{idx}")
+                    with col_agendar:
+                        btn_agendar = st.button("📅 Agendar Postagem", key=f"btn_agend_{idx}", use_container_width=True)
+                        if btn_agendar:
+                            dt_combinado = datetime.combine(data_post, hora_post)
+                            fila[idx]["data_hora_agendamento"] = dt_combinado.strftime("%Y-%m-%d %H:%M:%S")
+                            fila[idx]["status"] = "Agendado"
+                            with open(caminho_fila, "w") as f:
+                                json.dump(fila, f, indent=4)
+                            st.success(f"Post agendado para {dt_combinado.strftime('%d/%m/%Y às %H:%M')}!")
+                            st.rerun()
+
+                    st.markdown("---")
+                    # Botões de Ação Imediata ou Remoção
                     col_btn1, col_btn2 = st.columns([1, 1])
                     with col_btn1:
                         btn_postar_fila = st.button("🚀 Publicar Agora", key=f"btn_pub_fila_{idx}", use_container_width=True)
