@@ -197,11 +197,13 @@ class AutomatizadorInstagram:
             # Passo 1: Injeta JS para clicar no botão "Criar" (Nova Publicação) na barra lateral
             js_abrir_modal = """
             (() => {
-                const criarBtn = Array.from(document.querySelectorAll('span, a, svg')).find(el => {
-                    const label = el.getAttribute('aria-label') || '';
-                    const text = el.textContent || '';
-                    return label.includes('Nova publicação') || label.includes('Criar') || text.includes('Criar') || text.includes('Create');
-                });
+                let criarBtn = document.querySelector('a[href*="/create/"]') || 
+                               document.querySelector('a[href*="/create/select/"]') ||
+                               document.querySelector('a[href*="create"]') ||
+                               Array.from(document.querySelectorAll('svg, span')).find(el => {
+                                   const label = el.getAttribute('aria-label') || el.textContent || '';
+                                   return label.includes('Nova publicação') || label.includes('Criar') || label.includes('Create');
+                               });
                 if (criarBtn) {
                     const clicavel = criarBtn.closest('a') || criarBtn.closest('button') || criarBtn;
                     clicavel.click();
@@ -219,20 +221,24 @@ class AutomatizadorInstagram:
             time.sleep(2.0)
             
             # Passo 2: Localiza o input de arquivo via CDP e faz o upload dos caminhos físicos
-            self.depurador.enviar_comando("DOM.enable")
-            doc = self.depurador.enviar_comando("DOM.getDocument")
-            root_node_id = doc["result"]["root"]["nodeId"]
-            
-            # Busca o seletor de arquivos do modal
-            res_query = self.depurador.enviar_comando(
-                "DOM.querySelector", 
-                {"nodeId": root_node_id, "selector": "input[type='file']"}
+            res_eval = self.depurador.enviar_comando(
+                "Runtime.evaluate", 
+                {"expression": "document.querySelector(\"input[type='file']\")", "includeCommandLineAPI": True}
             )
             
-            if "result" not in res_query or "nodeId" not in res_query["result"]:
-                raise ValueError("Erro: Input de upload de arquivos do Instagram não encontrado no modal.")
+            if "result" not in res_eval or "result" not in res_eval["result"] or "objectId" not in res_eval["result"]["result"]:
+                raise ValueError("Erro: Input de upload de arquivos do Instagram não encontrado no modal. O modal chegou a abrir?")
                 
-            input_node_id = res_query["result"]["nodeId"]
+            object_id = res_eval["result"]["result"]["objectId"]
+            
+            # Converte o objectId do JS para o nodeId do DOM do CDP
+            self.depurador.enviar_comando("DOM.enable")
+            res_node = self.depurador.enviar_comando("DOM.requestNode", {"objectId": object_id})
+            
+            if "result" not in res_node or "nodeId" not in res_node["result"]:
+                raise ValueError("Erro ao mapear o elemento de upload de arquivos no protocolo do Chrome.")
+                
+            input_node_id = res_node["result"]["nodeId"]
             
             # Injeta os arquivos no Chrome de forma transparente (sem abrir a janela do sistema)
             self.depurador.enviar_comando(

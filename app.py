@@ -134,7 +134,7 @@ with aba_criar_post:
     
     with col_upload:
         st.markdown("### 🖼️ Mídia do Post")
-        tipo_midia = st.radio("Tipo de publicação:", ["Imagem Única", "Carrossel (Múltiplas Fotos)", "Reels (Vídeo)"])
+        tipo_midia = st.radio("Tipo de publicação:", ["Imagens (Única ou Carrossel)", "Reels (Vídeo)"])
         
         arquivos_midia = []
         if tipo_midia == "Reels (Vídeo)":
@@ -142,15 +142,15 @@ with aba_criar_post:
             if arquivo:
                 arquivos_midia = [arquivo]
         else:
-            multiplas = (tipo_midia == "Carrossel (Múltiplas Fotos)")
+            # Permite selecionar múltiplos arquivos de imagem por padrão
             arquivos = st.file_uploader(
-                "Selecione as imagens do post:", 
+                "Selecione as imagens do post (selecione uma ou mais para Carrossel):", 
                 type=["png", "jpg", "jpeg"], 
-                accept_multiple_files=multiplas,
+                accept_multiple_files=True,
                 key="imagens_post"
             )
             if arquivos:
-                arquivos_midia = arquivos if isinstance(arquivos, list) else [arquivos]
+                arquivos_midia = arquivos
                 
         prompt_custom = st.text_area(
             "Ideias/Instruções para o post (opcional):",
