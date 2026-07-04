@@ -1,6 +1,10 @@
 import os
 from google import genai
 from PIL import Image
+from dotenv import load_dotenv
+
+# Garante o carregamento do .env em execucoes isoladas
+load_dotenv()
 
 class ServicoGemini:
     """
